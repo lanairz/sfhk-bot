@@ -106,9 +106,9 @@ def build_leaderboard_text(guild):
 
     lines = []
     lines.append("```")
-    lines.append("╔══════════════════════════════════════════╗")
-    lines.append("║          🏅  XP  LEADERBOARD  🏅        ║")
-    lines.append("╚══════════════════════════════════════════╝")
+    lines.append("╔════════════════════════════════════╗")
+    lines.append("║      🏅  XP  LEADERBOARD  🏅      ║")
+    lines.append("╚════════════════════════════════════╝")
     lines.append("```")
 
     if not sorted_xp:
