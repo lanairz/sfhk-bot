@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import json
 import os
 from dotenv import load_dotenv
@@ -24,7 +24,8 @@ async def on_ready():
     print(f'Logged in as {bot.user.name} ({bot.user.id})')
     await bot.tree.sync()
     print(f'Synced {len(bot.tree.get_commands())} commands.')
-    print('Bot is ready!') 
+    print('Bot is ready!')
+    refresh_leaderboards.start()
 
 # ==================== Methods ====================
 
@@ -35,7 +36,6 @@ async def award_voice_xp_loop(member, xp_to_award):
     while True:
         await asyncio.sleep(60)
 
-        # FIX: load config inside the loop so levelup_channel_id is always available
         if os.path.exists('server_config.json'):
             with open('server_config.json', 'r') as f:
                 config = json.load(f)
@@ -77,12 +77,132 @@ def xp_to_level(xp):
         xp -= level * 100
     return level
 
+def build_leaderboard_text(guild):
+    """Build the full leaderboard message text for a guild."""
+    guild_id = str(guild.id)
+
+    if os.path.exists('xp.json'):
+        with open('xp.json', 'r') as f:
+            xp_data = json.load(f)
+    else:
+        xp_data = {}
+
+    entries = xp_data.get(guild_id, {})
+    sorted_xp = sorted(entries.items(), key=lambda x: x[1], reverse=True)
+
+    rank_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
+    tier_thresholds = [
+        (15, "💎"),  # Diamond
+        (10, "🏆"),  # Gold
+        (5,  "⚡"),  # Silver-ish
+        (1,  "🌱"),  # Starter
+    ]
+
+    def get_tier(level):
+        for threshold, icon in tier_thresholds:
+            if level >= threshold:
+                return icon
+        return "🌱"
+
+    lines = []
+    lines.append("```")
+    lines.append("╔══════════════════════════════════════════╗")
+    lines.append("║           🏅  XP  LEADERBOARD  🏅        ║")
+    lines.append("╚══════════════════════════════════════════╝")
+    lines.append("```")
+
+    if not sorted_xp:
+        lines.append("*Noch keine XP-Daten vorhanden.*")
+        lines.append("")
+        lines.append(f"-# 🔄 Zuletzt aktualisiert: <t:{int(__import__('time').time())}:R>")
+        return "\n".join(lines)
+
+    top20 = sorted_xp[:20]
+
+    for idx, (user_id, xp) in enumerate(top20, start=1):
+        member = guild.get_member(int(user_id))
+        name = member.display_name if member else f"Unbekannt ({user_id})"
+        level = xp_to_level(xp)
+        tier = get_tier(level)
+        rank_icon = rank_emojis.get(idx, f"`{idx:>2}.`")
+
+        # Build a compact bar (10 chars wide) based on XP relative to top user
+        top_xp = sorted_xp[0][1] if sorted_xp else 1
+        filled = round((xp / top_xp) * 8) if top_xp > 0 else 0
+        bar = "█" * filled + "░" * (8 - filled)
+
+        if idx <= 3:
+            lines.append(f"{rank_icon} **{name}**")
+            lines.append(f"  {tier} Level **{level}**  ┃  `{bar}`  ┃  {xp:,} XP")
+        else:
+            lines.append(f"`{idx:>2}.` {tier} **{name}** — Lvl {level} ┃ {xp:,} XP")
+
+        if idx == 3 and len(top20) > 3:
+            lines.append("─────────────────────────────────────────")
+
+    lines.append("")
+    lines.append(f"-# 🔄 Zuletzt aktualisiert: <t:{int(__import__('time').time())}:R>  •  Alle 60 Min. aktualisiert")
+
+    return "\n".join(lines)
+
+async def post_or_edit_leaderboard(guild):
+    """Post a new leaderboard message or edit the existing one for a guild."""
+    guild_id = str(guild.id)
+
+    if os.path.exists('server_config.json'):
+        with open('server_config.json', 'r') as f:
+            config = json.load(f)
+    else:
+        return
+
+    guild_config = config.get(guild_id, {})
+    channel_id = guild_config.get('leaderboard_channel_id')
+    if not channel_id:
+        return
+
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
+
+    text = build_leaderboard_text(guild)
+    stored_msg_id = guild_config.get('leaderboard_message_id')
+
+    # Try to edit existing message
+    if stored_msg_id:
+        try:
+            msg = await channel.fetch_message(stored_msg_id)
+            await msg.edit(content=text)
+            return
+        except (discord.NotFound, discord.Forbidden):
+            pass  # Message gone or no perms — fall through to send a new one
+
+    # Send a fresh message and save its ID
+    new_msg = await channel.send(text)
+    config[guild_id]['leaderboard_message_id'] = new_msg.id
+    with open('server_config.json', 'w') as f:
+        json.dump(config, f, indent=4)
+
+# ==================== Background Task ====================
+
+@tasks.loop(minutes=60)
+async def refresh_leaderboards():
+    """Refresh the leaderboard message in every configured guild every hour."""
+    for guild in bot.guilds:
+        try:
+            await post_or_edit_leaderboard(guild)
+        except Exception as e:
+            print(f"Error refreshing leaderboard for guild {guild.id}: {e}")
+
+@refresh_leaderboards.before_loop
+async def before_refresh():
+    await bot.wait_until_ready()
+
 # ==================== Commands ====================
 
 # slash command for ping
 @bot.tree.command(name="ping", description="Check the bot's latency.")
 async def ping(interaction: discord.Interaction):
-    latency = bot.latency * 1000  # Convert to milliseconds
+    latency = bot.latency * 1000
     await interaction.response.send_message(f'Pong! Latency: {latency:.2f} ms', ephemeral=True)
 
 # slash command for help
@@ -97,6 +217,7 @@ async def help_command(interaction: discord.Interaction):
         embed.add_field(name="/setleavingmsg [message]", value="Set the leaving message for members who leave. Use {user} to mention the leaving member. (Admin only)", inline=False)
         embed.add_field(name="/setxppermessage [xp]", value="Set the amount of XP awarded per message. (Admin only)", inline=False)
         embed.add_field(name="/seteventchannel [channel]", value="Set the event channel for server events. (Admin only)", inline=False)
+        embed.add_field(name="/setleaderboardchannel [channel]", value="Set the live leaderboard channel (auto-updates every hour). (Admin only)", inline=False)
     embed.add_field(name="/leaderboard", value="Show the XP leaderboard for the server.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -301,6 +422,42 @@ async def setlevelupchannel(interaction: discord.Interaction, channel: discord.T
 
     await interaction.response.send_message(f'Level-up channel set to {channel.mention}!', ephemeral=True)
 
+# slash command to set the live leaderboard channel, only for administrators
+@bot.tree.command(name="setleaderboardchannel", description="Set the channel for the live leaderboard (auto-updates every hour).")
+async def setleaderboardchannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("You must be an administrator to use this command.", ephemeral=True)
+        return
+
+    guild_id = str(interaction.guild_id)
+
+    if os.path.exists('server_config.json'):
+        with open('server_config.json', 'r') as f:
+            config = json.load(f)
+    else:
+        config = {}
+
+    if guild_id not in config:
+        config[guild_id] = {}
+
+    # If the channel changed, clear the old message ID so a fresh message is posted
+    old_channel_id = config[guild_id].get('leaderboard_channel_id')
+    if old_channel_id != channel.id:
+        config[guild_id].pop('leaderboard_message_id', None)
+
+    config[guild_id]['leaderboard_channel_id'] = channel.id
+
+    with open('server_config.json', 'w') as f:
+        json.dump(config, f, indent=4)
+
+    await interaction.response.send_message(
+        f'Live leaderboard channel set to {channel.mention}! Posting the first update now…',
+        ephemeral=True
+    )
+
+    # Post the first update immediately
+    await post_or_edit_leaderboard(interaction.guild)
+
 # ==================== Events ====================
 
 @bot.event
@@ -411,8 +568,6 @@ async def on_voice_state_update(member, before, after):
 
     # User joined a voice channel (was not in one before)
     if before.channel is None and after.channel is not None:
-        # FIX: cancel any existing task for this user before creating a new one,
-        # preventing duplicate XP loops from reconnects or unexpected event re-fires
         if key in voice_tasks:
             voice_tasks[key].cancel()
             del voice_tasks[key]
