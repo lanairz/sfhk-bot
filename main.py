@@ -217,6 +217,7 @@ async def help_command(interaction: discord.Interaction):
         embed.add_field(name="/setleavingmsg [message]", value="Set the leaving message for members who leave. Use {user} to mention the leaving member. (Admin only)", inline=False)
         embed.add_field(name="/setxppermessage [xp]", value="Set the amount of XP awarded per message. (Admin only)", inline=False)
         embed.add_field(name="/seteventchannel [channel]", value="Set the event channel for server events. (Admin only)", inline=False)
+        embed.add_field(name="/setlevelupchannel [channel]", value="Set the channel for level-up messages. (Admin only)", inline=False)
         embed.add_field(name="/setleaderboardchannel [channel]", value="Set the live leaderboard channel (auto-updates every hour). (Admin only)", inline=False)
     embed.add_field(name="/leaderboard", value="Show the XP leaderboard for the server.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -573,6 +574,10 @@ async def on_voice_state_update(member, before, after):
             del voice_tasks[key]
         if xp_per_message > 0:
             xp_to_award = (xp_per_message + 2) // 3
+            for event in member.guild.scheduled_events:
+                if event.status == discord.EventStatus.active and event.channel_id == after.channel.id:
+                    xp_to_award = int(xp_to_award * 1.5)
+                    break
             task = asyncio.create_task(award_voice_xp_loop(member, xp_to_award))
             voice_tasks[key] = task
 
