@@ -458,6 +458,37 @@ async def setleaderboardchannel(interaction: discord.Interaction, channel: disco
     # Post the first update immediately
     await post_or_edit_leaderboard(interaction.guild)
 
+# slash command to view your level and XP progress with a progress bar similar to the one in the leaderboard, but showing your current XP progress towards the next level
+@bot.tree.command(name="level", description="Show your current level and XP progress.")
+async def level(interaction: discord.Interaction):
+    guild_id = str(interaction.guild_id)
+    user_id = str(interaction.user.id)
+
+    if os.path.exists('xp.json'):
+        with open('xp.json', 'r') as f:
+            xp_data = json.load(f)
+    else:
+        xp_data = {}
+
+    xp = xp_data.get(guild_id, {}).get(user_id, 0)
+    level = xp_to_level(xp)
+
+    # Calculate XP needed for next level
+    next_level_xp = sum(i * 100 for i in range(1, level + 1))
+    prev_level_xp = sum(i * 100 for i in range(1, level))
+    xp_into_level = xp - prev_level_xp
+    xp_for_level = next_level_xp - prev_level_xp
+
+    # Build progress bar (10 chars wide)
+    filled = round((xp_into_level / xp_for_level) * 8) if xp_for_level > 0 else 0
+    bar = "█" * filled + "░" * (8 - filled)
+
+    embed = discord.Embed(title=f"{interaction.user.display_name}'s Level", color=0x00ff00)
+    embed.add_field(name="Level", value=f"⭐ {level} ⭐", inline=False)
+    embed.add_field(name="XP Progress", value=f'`{bar}` {xp_into_level}/{xp_for_level} XP', inline=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # ==================== Events ====================
 
 @bot.event
