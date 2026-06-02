@@ -220,6 +220,7 @@ async def help_command(interaction: discord.Interaction):
         embed.add_field(name="/setlevelupchannel [channel]", value="Set the channel for level-up messages. (Admin only)", inline=False)
         embed.add_field(name="/setleaderboardchannel [channel]", value="Set the live leaderboard channel (auto-updates every hour). (Admin only)", inline=False)
     embed.add_field(name="/leaderboard", value="Show the XP leaderboard for the server.", inline=False)
+    embed.add_field(name="/level", value="Show your current level and XP progress.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # slash command to set the welcome channel, only for administrators
