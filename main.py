@@ -4,6 +4,7 @@ import json
 import os
 from dotenv import load_dotenv
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 intents = discord.Intents.default()
 intents.members = True
@@ -181,6 +182,24 @@ async def post_or_edit_leaderboard(guild):
     config[guild_id]['leaderboard_message_id'] = new_msg.id
     with open('server_config.json', 'w') as f:
         json.dump(config, f, indent=4)
+
+async def schedule_message_delete(message, delete_at):
+    if delete_at is None:
+        return
+
+    if delete_at.tzinfo is None:
+        delete_at = delete_at.replace(tzinfo=timezone.utc)
+
+    delay = (delete_at - datetime.now(timezone.utc)).total_seconds()
+    if delay <= 0:
+        return
+
+    # Fire-and-forget deletion scheduled for a specific timestamp.
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except (discord.NotFound, discord.Forbidden):
+        pass
 
 # ==================== Background Task ====================
 
@@ -507,7 +526,10 @@ async def on_scheduled_event_create(event):
         channel_id = config[guild_id]['event_channel_id']
         channel = bot.get_channel(channel_id)
         if channel:
-            await channel.send(f'@everyone\n{event.url}')
+            msg = await channel.send(f'@everyone\n{event.url}')
+            if event.scheduled_start_time:
+                delete_at = event.scheduled_start_time + timedelta(days=1)
+                asyncio.create_task(schedule_message_delete(msg, delete_at))
 
 @bot.event
 async def on_message(message):
