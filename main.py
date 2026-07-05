@@ -527,8 +527,9 @@ async def on_scheduled_event_create(event):
         channel = bot.get_channel(channel_id)
         if channel:
             msg = await channel.send(f'@everyone\n{event.url}')
-            if event.scheduled_start_time:
-                delete_at = event.scheduled_start_time + timedelta(days=1)
+            event_start_time = getattr(event, 'start_time', None) or getattr(event, 'scheduled_start_time', None)
+            if event_start_time:
+                delete_at = event_start_time + timedelta(days=1)
                 asyncio.create_task(schedule_message_delete(msg, delete_at))
 
 @bot.event
